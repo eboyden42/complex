@@ -5,11 +5,19 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"math"
 	"os"
 	"sync"
 	"time"
 )
+
+const width = 20000
+const height = 20000
+const numThreads = 4
+const depth = 150
+
+var pallet []color.RGBA = makePallet(depth)
+
+const percentUpdates = 100
 
 type point struct {
 	x, y int
@@ -17,77 +25,76 @@ type point struct {
 
 type write struct {
 	p     point
-	value bool
+	value color.RGBA
+}
+
+func makePallet(depth int) []color.RGBA {
+	res := make([]color.RGBA, depth)
+	m := -float32(255) / float32(depth)
+	for i := 0; i < depth; i++ {
+		val := uint8(float32(i)*m + 255)
+		clr := color.RGBA{val, val, val, 255}
+		res[i] = clr
+	}
+	return res
 }
 
 func bitMapToNormFloat(num, end int) float64 {
 	return (1 / float64(end)) * float64(num) * 2
 }
 
-func isInMandlebrot(c complex128, n int, threshold float64) bool {
-	// iterate the function f(z) = z^2 + c n times tracking the previous value
-	// if the absolute difference between the previous and current value ever exceeds threshold return false, else true
-	prev := c
-	curr := c
+func isInMandelbrot(x0, y0 float64, n int, threshold float64) color.RGBA {
+	// iterate the function f(z) = z^2 + c n times
+	x2 := 0.0
+	y2 := 0.0
+	x := 0.0
+	y := 0.0
+
 	for i := 0; i < n; i++ {
-		if math.Abs(modulus(curr)-modulus(prev)) > threshold {
-			return false
+		if x2+y2 > threshold {
+			return pallet[i]
 		}
-		tmp := curr
-		curr = prev*prev + c
-		prev = tmp
+		x2 = x * x
+		y2 = y * y
+		y = (x+x)*y + y0
+		x = x2 - y2 + x0
 	}
-	return true
+	return pallet[n-1]
 }
 
-func modulus(c complex128) float64 {
-	r := real(c)
-	i := imag(c)
-	return math.Sqrt(r*r + i*i)
-}
-
-func reader(id, width int, points <-chan point, writes chan<- write, wg *sync.WaitGroup) {
+func reader(width int, points <-chan point, writes chan<- write, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
 		p, ok := <-points
-		// fmt.Printf("worker %d recieved %d, %d", id, p.x, p.y)
 		if !ok {
-			fmt.Printf("Read channel closed %d\n", id)
 			return
 		}
 		xval := bitMapToNormFloat(p.x, width)
 		yval := bitMapToNormFloat(p.y, width)
-		z := complex(xval, yval)
 
-		wr := write{p, isInMandlebrot(z, 100, 30.0)}
+		wr := write{p, isInMandelbrot(xval, yval, depth, 4.0)}
 		writes <- wr
 	}
 }
 
-func writer(width int, writes <-chan write, nums chan<- int, img *image.RGBA, wg *sync.WaitGroup) {
+func writer(writes <-chan write, nums chan<- int, img *image.RGBA, wg *sync.WaitGroup) {
 	defer wg.Done()
-	black := color.RGBA{0, 0, 0, 0}
-	white := color.RGBA{255, 255, 255, 255}
 
 	for {
 		wr, ok := <-writes
 		if !ok {
-			fmt.Println("Write channel closed")
 			return
 		}
-		if wr.value {
-			img.Set(wr.p.x, wr.p.y, white)
-		} else {
-			img.Set(wr.p.x, wr.p.y, black)
-		}
+
+		img.Set(wr.p.x, wr.p.y, wr.value)
+
 		nums <- 1
 	}
 }
 
 func tracker(total int, nums <-chan int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	const percentUpdates = 4
 
 	interval := total / percentUpdates
 	partial := 0
@@ -95,7 +102,6 @@ func tracker(total int, nums <-chan int, wg *sync.WaitGroup) {
 	for {
 		_, ok := <-nums
 		if !ok {
-			fmt.Println("Tracker channel closed")
 			return
 		}
 		partial++
@@ -106,10 +112,6 @@ func tracker(total int, nums <-chan int, wg *sync.WaitGroup) {
 }
 
 func main() {
-	const width = 2000
-	const height = 2000
-	const numThreads = 4
-
 	startWidth := width/2 - width
 	endWidth := width / 2
 	startHeight := height/2 - height
@@ -127,17 +129,17 @@ func main() {
 
 	wgRead.Add(numThreads)
 	for i := 0; i < numThreads; i++ {
-		go reader(i, endWidth, points, writes, &wgRead)
+		go reader(endWidth, points, writes, &wgRead)
 	}
 
 	wgWrite.Add(1)
-	go writer(endWidth, writes, nums, img, &wgWrite)
+	go writer(writes, nums, img, &wgWrite)
 
 	wgTracker.Add(1)
 	go tracker(width*height, nums, &wgTracker)
 
 	start := time.Now()
-	fmt.Println("Started calculating...")
+	fmt.Println("Issuing point calculations to threads...")
 
 	for x := startWidth; x < endWidth; x++ {
 		for y := startHeight; y < endHeight; y++ {
@@ -147,20 +149,17 @@ func main() {
 
 	close(points)
 	wgRead.Wait()
-	end1 := time.Now()
-	diff1 := end1.Sub(start)
-	fmt.Printf("Total time for reader execution: %.5f \n", diff1.Seconds())
 
 	close(writes)
 	wgWrite.Wait()
 	end := time.Now()
 	diff := end.Sub(start)
-	fmt.Printf("Total time for reader and writer execution: %.5f \n", diff.Seconds())
+	fmt.Printf("Total time: %.5f \n", diff.Seconds())
 
 	close(nums)
 	wgTracker.Wait()
 
-	file, err := os.Create("mandlebrot.png")
+	file, err := os.Create("mandelbrot.png")
 	if err != nil {
 		panic(err)
 	}
@@ -170,5 +169,5 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println("Image written to mandlebrot.png")
+	fmt.Println("Image written to mandelbrot.png")
 }
