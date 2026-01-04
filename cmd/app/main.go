@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -11,13 +12,11 @@ import (
 	"time"
 )
 
-const width = 20000
-const height = 20000
-const numThreads = 4
-const depth = 150
-const palletConcavityPower = 0.2
-
-var pallet []color.RGBA = makePalletVar(depth, palletConcavityPower)
+var size int
+var numThreads int
+var depth int
+var palletConcavityPower float64
+var pallet []color.RGBA
 
 const percentUpdates = 100
 
@@ -41,7 +40,7 @@ func makePalletLinear(depth int) []color.RGBA {
 	return res
 }
 
-func makePalletVar(int, p float64) []color.RGBA {
+func makePalletVar(depth int, p float64) []color.RGBA {
 	res := make([]color.RGBA, depth)
 	for i := 0; i < depth; i++ {
 		val := uint8(variableNormFunc(float64(i), p))
@@ -55,7 +54,7 @@ func variableNormFunc(x, p float64) float64 {
 	return 255.0 * (1 - math.Pow(x/255.0, p))
 }
 
-func inverseNormFunc(x float64) float64 { // this function is too concave for pallet generation
+func inverseNormFunc(x float64) float64 { // this function is too concave for pallet generation but it's pretty cool so I'm leaving it in the codebase
 	a := float64(-255.0+math.Sqrt(65029)) / 2.0
 	return 1/(x+a) - a // formula for a f(x) = 1/x plot where f(0) = 255 and f(255) = 0
 }
@@ -133,14 +132,34 @@ func tracker(total int, nums <-chan int, wg *sync.WaitGroup) {
 }
 
 func main() {
-	startWidth := width/2 - width
-	endWidth := width / 2
-	startHeight := height/2 - height
-	endHeight := height / 2
+	// arg parsing
+	flag.IntVar(&size, "size", 2000, "Specify the size of the image. Example -size=3000 produces a 3000x3000 bitmap png.")
+	flag.IntVar(&numThreads, "threads", 4, "Specify the number of threads used to calculate the status of each point.")
+	flag.IntVar(&depth, "depth", 150, "Specify the number of iterations that will be performed on each complex number before it is determined to be inside the mandelbrot set.")
+	flag.Float64Var(&palletConcavityPower, "concavity", 0.2, "Specify the power of the function used to generate a pallet.")
+	filename := flag.String("out", "mandelbrot.png", "Specify the output file name.")
 
+	flag.Parse()
+
+	// ensure filename ends with .png
+	if (*filename)[len(*filename)-4:] != ".png" {
+		*filename += ".png"
+	}
+
+	// create pallet
+	pallet = makePalletVar(depth, palletConcavityPower)
+
+	// calculate dimensions
+	startWidth := size/2 - size
+	endWidth := size / 2
+	startHeight := startWidth
+	endHeight := endWidth
+
+	// create rectangle and image
 	rect := image.Rect(startWidth, startHeight, endWidth, endHeight)
 	img := image.NewRGBA(rect)
 
+	// create WaitGroups and channels
 	var wgRead sync.WaitGroup
 	var wgWrite sync.WaitGroup
 	var wgTracker sync.WaitGroup
@@ -148,6 +167,7 @@ func main() {
 	writes := make(chan write)
 	nums := make(chan int)
 
+	// create threads
 	wgRead.Add(numThreads)
 	for i := 0; i < numThreads; i++ {
 		go reader(endWidth, points, writes, &wgRead)
@@ -157,8 +177,9 @@ func main() {
 	go writer(writes, nums, img, &wgWrite)
 
 	wgTracker.Add(1)
-	go tracker(width*height, nums, &wgTracker)
+	go tracker(size*size, nums, &wgTracker)
 
+	// starting timer and issuing points to pipeline
 	start := time.Now()
 	fmt.Println("Issuing point calculations to threads...")
 
@@ -168,20 +189,23 @@ func main() {
 		}
 	}
 
+	// closing channels and waiting for routines
 	close(points)
 	wgRead.Wait()
 
 	close(writes)
 	wgWrite.Wait()
-	end := time.Now()
-	diff := end.Sub(start)
-	fmt.Printf("Total time: %.5f \n", diff.Seconds())
 
 	close(nums)
 	wgTracker.Wait()
 
-	filename := fmt.Sprintf(fmt.Sprintf("mandelbrot%d.png", width))
-	file, err := os.Create(filename)
+	// calculating time
+	end := time.Now()
+	diff := end.Sub(start)
+	fmt.Printf("Total time: %.5f \n", diff.Seconds())
+
+	// writing output image
+	file, err := os.Create(*filename)
 	if err != nil {
 		panic(err)
 	}
@@ -191,5 +215,5 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Image written to %s\n", filename)
+	fmt.Printf("Image written to %s\n", *filename)
 }

@@ -6,4 +6,4 @@ main: main.go
 clean:
 	rm -f main mandelbrot.png
 
-.PHONY: all
+.PHONY: all clean
