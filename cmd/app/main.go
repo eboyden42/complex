@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"math"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -132,9 +133,11 @@ func tracker(total int, nums <-chan int, wg *sync.WaitGroup) {
 }
 
 func main() {
+	processors := runtime.NumCPU()
+
 	// arg parsing
 	flag.IntVar(&size, "size", 2000, "Specify the size of the image. Example -size=3000 produces a 3000x3000 bitmap png.")
-	flag.IntVar(&numThreads, "threads", 4, "Specify the number of threads used to calculate the status of each point.")
+	flag.IntVar(&numThreads, "threads", processors, "Specify the number of threads used to calculate the status of each point.")
 	flag.IntVar(&depth, "depth", 150, "Specify the number of iterations that will be performed on each complex number before it is determined to be inside the mandelbrot set.")
 	flag.Float64Var(&palletConcavityPower, "concavity", 0.2, "Specify the power of the function used to generate a pallet.")
 	filename := flag.String("out", "mandelbrot.png", "Specify the output file name.")
@@ -163,11 +166,13 @@ func main() {
 	var wgRead sync.WaitGroup
 	var wgWrite sync.WaitGroup
 	var wgTracker sync.WaitGroup
-	points := make(chan point)
-	writes := make(chan write)
-	nums := make(chan int)
+	chanSize := size * size
+	points := make(chan point, chanSize)
+	writes := make(chan write, chanSize)
+	nums := make(chan int, chanSize)
 
 	// create threads
+	fmt.Printf("Creating %d threads\n", numThreads)
 	wgRead.Add(numThreads)
 	for i := 0; i < numThreads; i++ {
 		go reader(endWidth, points, writes, &wgRead)
