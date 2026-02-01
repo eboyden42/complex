@@ -174,7 +174,7 @@ func main() {
 	// create threads
 	fmt.Printf("Creating %d threads\n", numThreads)
 	wgRead.Add(numThreads)
-	for i := 0; i < numThreads; i++ {
+	for i := 0; i < numThreads-2; i++ {
 		go reader(endWidth, points, writes, &wgRead)
 	}
 
