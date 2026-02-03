@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"image"
 	"image/color"
 	"runtime"
 	"sync"
@@ -28,6 +27,7 @@ type write struct {
 }
 
 func reader(points <-chan calculation.IntPoint, writes chan<- write, wg *sync.WaitGroup) {
+	wg.Add(1)
 	defer wg.Done()
 
 	for {
@@ -45,7 +45,8 @@ func reader(points <-chan calculation.IntPoint, writes chan<- write, wg *sync.Wa
 	}
 }
 
-func writer(writes <-chan write, nums chan<- int, img *image.RGBA, wg *sync.WaitGroup) {
+func writer(writes <-chan write, nums chan<- int, img images.Image, wg *sync.WaitGroup) {
+	wg.Add(1)
 	defer wg.Done()
 
 	for {
@@ -54,13 +55,14 @@ func writer(writes <-chan write, nums chan<- int, img *image.RGBA, wg *sync.Wait
 			return
 		}
 
-		img.Set(wr.p.X0, wr.p.Y0, wr.value)
+		img.WritePoint(wr.p.X0, wr.p.Y0, wr.value)
 
 		nums <- 1
 	}
 }
 
 func tracker(total int, nums <-chan int, wg *sync.WaitGroup) {
+	wg.Add(1)
 	defer wg.Done()
 
 	interval := total / percentUpdates
@@ -94,8 +96,9 @@ func main() {
 		*filename += ".png"
 	}
 
-	// create pallet
+	// create pallet and image
 	pallet = colors.NewPalletVar(depth, palletConcavityPower)
+	newImage := images.NewImage(size)
 
 	// create WaitGroups and channels
 	var wgRead sync.WaitGroup
@@ -108,23 +111,15 @@ func main() {
 
 	// create threads
 	fmt.Printf("Creating %d threads\n", numThreads)
-	wgRead.Add(numThreads - 2)
+
 	for i := 0; i < numThreads-2; i++ {
 		go reader(points, writes, &wgRead)
 	}
-
-	newImage := images.NewImage(size)
-
-	wgWrite.Add(1)
-	go writer(writes, nums, newImage.Img, &wgWrite)
-
-	wgTracker.Add(1)
+	go writer(writes, nums, newImage, &wgWrite)
 	go tracker(size*size, nums, &wgTracker)
 
 	// starting timer and issuing points to pipeline
 	start := time.Now()
-	fmt.Println("Issuing point calculations to threads...")
-
 	for x := newImage.StartWidth; x < newImage.EndWidth; x++ {
 		for y := newImage.StartHeight; y < newImage.EndHeight; y++ {
 			points <- calculation.IntPoint{X0: x, Y0: y}
@@ -145,6 +140,6 @@ func main() {
 	end := time.Now()
 	diff := end.Sub(start)
 	fmt.Printf("\nTotal time: %.5f \n", diff.Seconds())
-
 	newImage.WriteImage(*filename)
+
 }
