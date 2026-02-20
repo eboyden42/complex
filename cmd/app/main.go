@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 
@@ -87,13 +88,20 @@ func main() {
 	flag.IntVar(&numThreads, "threads", processors, "Specify the number of threads used to calculate the status of each point.")
 	flag.IntVar(&depth, "depth", 150, "Specify the number of iterations that will be performed on each complex number before it is determined to be inside the mandelbrot set.")
 	flag.Float64Var(&palletConcavityPower, "concavity", 0.2, "Specify the power of the function used to generate a pallet.")
-	filename := flag.String("out", "mandelbrot.png", "Specify the output file name.")
+	filename := flag.String("out", "mandelbrot", "Specify the output file name.")
+	fileType := flag.String("type", "png", "Specify an output file type (accepts \"png\" or \"jpeg\").")
 
 	flag.Parse()
 
+	fileExtension := fmt.Sprintf(".%s", *fileType)
+	allowedExtensions := []string{".jpeg", ".png"}
+	if !slices.Contains(allowedExtensions, fileExtension) {
+		panic("Input file type is not a valid file type (must be \"png\" or \"jpeg\").")
+	}
+
 	// ensure filename ends with .png
-	if (*filename)[len(*filename)-4:] != ".png" {
-		*filename += ".png"
+	if (*filename)[len(*filename)-4:] != fileExtension {
+		*filename += fileExtension
 	}
 
 	// create pallet and image
@@ -140,6 +148,11 @@ func main() {
 	end := time.Now()
 	diff := end.Sub(start)
 	fmt.Printf("\nTotal time: %.5f \n", diff.Seconds())
-	newImage.WriteImage(*filename)
+	switch fileExtension {
+	case ".jpeg":
+		newImage.WriteImageAsJPEG(*filename)
+	case ".png":
+		newImage.WriteImageAsPNG(*filename)
+	}
 
 }
